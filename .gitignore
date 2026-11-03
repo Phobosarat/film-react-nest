@@ -1,2 +1,12 @@
-node_modules
-.idea
+node_modules/
+.idea/
+
+.env
+.env.*
+!.env.example
+
+dist/
+build/
+
+*.log
+.DS_Store
