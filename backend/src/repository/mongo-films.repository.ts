@@ -1,7 +1,7 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Connection, Model } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 import { Film, FilmDocument } from '../films/schemas/film.schema';
 import { FilmDto, ScheduleDto } from '../films/dto/films.dto';
@@ -17,9 +17,6 @@ export class MongoFilmsRepository implements FilmsRepository {
   constructor(
     @InjectModel(Film.name)
     private readonly filmModel: Model<Film>,
-
-    @InjectConnection()
-    private readonly connection: Connection,
   ) {}
 
   async findAll(): Promise<FilmDto[]> {
@@ -51,7 +48,6 @@ export class MongoFilmsRepository implements FilmsRepository {
     filmId: string,
     sessionId: string,
     seatKey: string,
-    session: ClientSession,
   ): Promise<boolean> {
     const result = await this.filmModel.updateOne(
       {
@@ -68,66 +64,36 @@ export class MongoFilmsRepository implements FilmsRepository {
           'schedule.$.taken': seatKey,
         },
       },
-      { session },
     );
 
     return result.modifiedCount === 1;
   }
 
   async createOrder(order: CreateOrderDto): Promise<OrderResponseDto> {
-    const session = await this.connection.startSession();
+    const bookedTickets: OrderedTicketDto[] = [];
 
-    try {
-      const items = await session.withTransaction(
-        async (): Promise<OrderedTicketDto[]> => {
-          const bookedTickets: OrderedTicketDto[] = [];
+    for (const ticket of order.tickets) {
+      const seatKey = `${ticket.row}:${ticket.seat}`;
 
-          for (const ticket of order.tickets) {
-            const seatKey = `${ticket.row}:${ticket.seat}`;
-
-            const reserved = await this.reserveSeat(
-              ticket.film,
-              ticket.session,
-              seatKey,
-              session,
-            );
-
-            if (!reserved) {
-              throw new ConflictException('Место уже занято');
-            }
-
-            bookedTickets.push({
-              ...ticket,
-              id: randomUUID(),
-            });
-          }
-
-          return bookedTickets;
-        },
+      const reserved = await this.reserveSeat(
+        ticket.film,
+        ticket.session,
+        seatKey,
       );
 
-      if (!items) {
-        throw new ConflictException('Не удалось завершить бронирование');
+      if (!reserved) {
+        throw new ConflictException('Место уже занято или не найдено');
       }
 
-      return {
-        total: items.length,
-        items,
-      };
-    } catch (error) {
-      // Преобразуем конфликт записи MongoDB в HTTP 409.
-      if (
-        error instanceof Error &&
-        (error.message.includes('WriteConflict') ||
-          error.message.includes('write conflict') ||
-          error.message.includes('TransientTransactionError'))
-      ) {
-        throw new ConflictException('Место уже занято или бронируется');
-      }
-
-      throw error;
-    } finally {
-      await session.endSession();
+      bookedTickets.push({
+        ...ticket,
+        id: randomUUID(),
+      });
     }
+
+    return {
+      total: bookedTickets.length,
+      items: bookedTickets,
+    };
   }
 }
