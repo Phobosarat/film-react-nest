@@ -43,7 +43,7 @@ export class MongoFilmsRepository implements FilmsRepository {
 
     return film.schedule.map((session) => ({
       ...session,
-      hall: String(session.hall),
+      hall: Number(session.hall),
     }));
   }
 
